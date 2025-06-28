@@ -17,7 +17,21 @@
 using namespace std;
 
 const int serverPort = 25250;
-const char* ipIaddress = "127.0.0.1";
+const char* ipAddress = "127.0.0.1";
+
+vector<string> parseServerResponse(const char* buffer) {
+    /* Parse the server response and use white space as delimiter*/
+    string serverMResponse = string(buffer);
+    istringstream iss(serverMResponse);
+    string response;
+    vector<string> resData;
+    
+    while (iss >> response) {
+        resData.push_back(response);
+    }
+
+    return resData;
+}
 
 int main(int argc, char* argv[])
 {
@@ -36,7 +50,7 @@ int main(int argc, char* argv[])
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(serverPort);
-    serverAddress.sin_addr.s_addr = inet_addr(ipIaddress);
+    serverAddress.sin_addr.s_addr = inet_addr(ipAddress);
 
     // sending connection request
     if (connect(clientSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) {
@@ -74,30 +88,24 @@ int main(int argc, char* argv[])
     }
 
     if (byteSize == -1) {
-        perror("Failed to send message to server M!");
+        perror("Client failed to send message to server M!");
         exit(EXIT_FAILURE);
     }
 
     // get back response from server M
     char buffer[1024] = { 0 };
-    int messageBytes = recv(clientSocket, buffer, sizeof(buffer), 0);
+    ssize_t messageBytes = recv(clientSocket, buffer, sizeof(buffer), 0);
 
     if (messageBytes <= 0) {
         perror("Unable to get back response from server M.");
+        return EXIT_FAILURE;
     } else {
         // if balance inquiry
         if (argc == 2) {
             // serialize data into vector string
             buffer[messageBytes] = '\0';
-            string serverMResponse = string(buffer);
-            istringstream iss(serverMResponse);
-            string response;
-            vector<string> resData;
+            vector<string> resData = parseServerResponse(buffer);
             
-            while (iss >> response) {
-                resData.push_back(response);
-            }
-
             // User not part of network
             if (resData[0] == "False") {
                 string notAuthorized = userName + " is not a part of the network.\n";
@@ -107,19 +115,11 @@ int main(int argc, char* argv[])
                 // show balance
                 string authorized = "The current balance of " + userName + " is : " + resData[0] + " txcoins.\n";
                 cout << authorized;
-            }
-            
+            }            
         } else {
             // successful transaction
             buffer[messageBytes] = '\0';
-            string serverMResponse = string(buffer);
-            istringstream iss(serverMResponse);
-            string response;
-            vector<string> resData;
-            
-            while (iss >> response) {
-                resData.push_back(response);
-            }
+            vector<string> resData = parseServerResponse(buffer);
 
             string sender = argv[1];
             string receiver = argv[2];
@@ -159,7 +159,6 @@ int main(int argc, char* argv[])
     }    
     
     // closing socket
-    shutdown(clientSocket, SHUT_RDWR);
     close(clientSocket);
     return 0;
 }
