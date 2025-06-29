@@ -18,6 +18,10 @@
 #include <cctype>
 #include <unordered_map>
 #include <random>
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+
 
 using namespace std;
 
@@ -50,6 +54,20 @@ int calculateBalance(vector<string>& userTx) {
         }
     }
     return balance;
+}
+
+vector<string> convertStringtoVectorFormat(string data) {
+    /*Helper method to convert a string into a vector*/
+
+    istringstream iss(data);
+    string response;
+    vector<string> resData;
+    
+    while (iss >> response) {
+        resData.push_back(response);
+    }
+
+    return resData;
 }
 
 vector<string> encryptString(vector<string>& operation) {
@@ -109,11 +127,8 @@ vector<string> decryptString(vector<string>& operation) {
 
         string decrypted = "";
         for (size_t j = 0; j<currData.length(); j++) {
-            if (currData[j] == '-' || currData[j] == '+') {
-                decrypted += currData[j];
-            }
             // if alphabet
-            else if (isalpha(currData[j])) {
+            if (isalpha(currData[j])) {
                 // offset upper case alphabet by 3
                 if (isupper(currData[j])) {
                     int currCharIdx = int(currData[j]) - int('A');
@@ -125,7 +140,7 @@ vector<string> decryptString(vector<string>& operation) {
                     int offset = (currCharIdx - 3 + 26) % 26;
                     decrypted += lowerAlphabet[offset];
                 }
-            // offset digit by 3
+            // if digit offset by 3
             } else if (isdigit(currData[j])) {
                 int currCharIdx = int(currData[j]) - int('0');
                 int offset = (currCharIdx - 3 + 10) % 10;
@@ -164,6 +179,70 @@ string generateClientMsg(int msgCode, vector<string>& operation) {
 string generateMonitorMsg() {
     string msg = "";
     return msg;
+}
+
+vector<string> getAllTransactions(int serverNumber) {
+    /* Makes a request to all 3 servers in the backend 
+    and returns encrypted transactions. */
+    
+    vector<string> allTransactions;
+    int serverPort = serverMap.at(serverNumber);
+
+    // make UDP client socket
+    char buffer[1024];
+    struct sockaddr_in clientAddr, servaddr;
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    vector<string> reqData;
+
+    if (sockfd < 0) {
+        perror("UDP client socket creation failed"); 
+        exit(EXIT_FAILURE); 
+    }
+
+    // clear garbage values and fill client information
+    memset(&clientAddr, 0, sizeof(clientAddr));
+    clientAddr.sin_family = AF_INET;
+    clientAddr.sin_addr.s_addr = inet_addr(ipAddress);
+    clientAddr.sin_port = htons(UDPPort);
+
+    // to allow option to reuse the same port
+    int opt = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (bind(sockfd, (struct sockaddr*)&clientAddr, sizeof(clientAddr)) < 0) {
+        perror("Failed to bind UDP client socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // clear garbage values and fill server information
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = inet_addr(ipAddress);
+    servaddr.sin_port = htons(serverPort);
+
+    string req = "GETTXLIST";
+    const char *data = req.c_str();
+    socklen_t len = sizeof(servaddr); 
+    sendto(sockfd, (const char *)data, strlen(data),MSG_CONFIRM, (const struct sockaddr *) &servaddr,sizeof(servaddr));
+
+    while (true) {
+        int n = recvfrom(sockfd, (char *)buffer, sizeof(buffer),MSG_WAITALL, (struct sockaddr *) &servaddr,&len);
+
+        if (n < 0) {
+            string errMsg = "Failed to receive a line of data transaction from server " + string(1, upperAlphabet[serverNumber]);
+            perror(errMsg.c_str());
+        }
+
+        buffer[n] = '\0';
+        if (strcmp(buffer, "DONE") == 0) {
+            break;
+        }
+        // append to vector
+        string currLine = string(buffer);
+        allTransactions.push_back(currLine);
+    }
+    
+    return allTransactions;
 }
 
 bool recordFundTransfer(vector<string>& encryptedText) {
@@ -288,6 +367,36 @@ int createTCPSockets(int portNumber) {
     return sock;
 }
 
+bool recordAllTransactions(vector<string>& decryptedText, vector<string>& masterList) {
+    /* Record all transactions into file */
+    const char* filename = "txchain.txt";
+
+    // delete file if it already exists
+    FILE* file = fopen(filename, "r");
+
+    if (file) { 
+        fclose(file);
+        if (remove(filename) != 0) {
+            perror("Error deleting txchain.txt file");
+            return false;
+        }  
+    }
+
+    string txFile = string(filename);
+    ofstream log(txFile, ios::app);
+
+    for (size_t i = 0; i<decryptedText.size(); i++ ) {
+        vector<string> currMasterListText = convertStringtoVectorFormat(masterList[i]);
+        vector<string> currDecryptedText = convertStringtoVectorFormat(decryptedText[i]);
+        string lineToBeLogged = currMasterListText[0] + " " + currDecryptedText[1] + " " + currDecryptedText[2] + " " + currDecryptedText[3];
+        if (log.is_open()) {
+            log << lineToBeLogged << endl;
+        }
+    }
+    log.close();
+    return true;
+}
+
 vector<string> makeRequestToBackEndServers(int reqCode, int serverPortNumber, string user, char serverName) {
     /* reqCode will be either 1 or 2. 
        1 = CHECK WALLET, 
@@ -402,11 +511,7 @@ vector<string> makeRequestToBackEndServers(int reqCode, int serverPortNumber, st
         }
         // remove last index of vector, dont want "LastSerialNumber: "
         reqData.pop_back();
-        cout << buffer << "\n";
-    }
-    // TXLIST Transaction
-    else {
-        // use a buffer, since txt file could be several thousand lines.
+        // cout << buffer << "\n";
     }
 
     // close and tear down connection
@@ -414,6 +519,15 @@ vector<string> makeRequestToBackEndServers(int reqCode, int serverPortNumber, st
     shutdown(sockfd, SHUT_RDWR);
 
     return reqData;
+}
+
+int extractLeadingInt(const string& s) {
+    /* Helper function to help sort strings by 0th index.
+    Copied from chatgpt */
+    istringstream iss(s);
+    int value;
+    iss >> value;  // read leading integer
+    return value;
 }
 
 int startServer() {
@@ -549,8 +663,8 @@ int startServer() {
                     // decrypt the integers for sender only
                     vector<string> decryptedTx = decryptString(senderMasterList);
 
-                    string msg33 = "Last tx number is " + to_string(lastTx);
-                    cout << msg33 << "\n";
+                    // string msg33 = "Last tx number is " + to_string(lastTx);
+                    // cout << msg33 << "\n";
                     bool senderNotOnNetwork = decryptedTx[0] == "False" && decryptedTx[1] == "False" && decryptedTx[2] == "False";
                     bool receiverNotOnNetwork = receiverMasterList[0] == "False" && receiverMasterList[1] == "False" && receiverMasterList[2] == "False";
         
@@ -599,17 +713,6 @@ int startServer() {
                         }                                   
                     }
                 }
-
-                // Send a response
-                // const char* ack = "This is the server and I got your message";
-                // send(clientSocket, ack, strlen(ack), 0);
-
-                // ssize_t send(int sockfd, const void *buf, size_t len, int flags);
-                // sockfd	The socket file descriptor you're sending data through.
-                // buf	Pointer to the data you want to send (can be char*, const char*, etc.).
-                // len	Number of bytes to send.
-                // flags	Usually 0 for default behavior (blocking send).
-                // Returns	Number of bytes sent, or -1 on error.
             }
             recreateSockets = true;
             close(monitorServerSocket);
@@ -630,10 +733,37 @@ int startServer() {
             if (messageBytes <= 0) {
                 perror("Monitor message was not received.");
             } else {
-                cout << "Message from Monitor: " << buffer << endl;
-                // Send a response
-                // send(clientSocket, "Hello client", 12, 0);
+                string msg = "The main server received a sorted list request from the monitor using TCP over port " + to_string(monitorPort);
+                cout << msg << endl;
+
+                // to hold all the logged transactions.
+                vector<string> masterTransactionList;
+
+                // get list of encrypted transactions from servers A - B.
+                for (int i = 0; i < 3; i++) {
+                    // concat all the vectors into master list
+                    vector<string> currTransactions = getAllTransactions(i);
+                    masterTransactionList.insert(masterTransactionList.end(), currTransactions.begin(), currTransactions.end());
+                }
+                
+                // sort by 0th index, copied from chat gpt
+                sort(masterTransactionList.begin(), masterTransactionList.end(), [](const string& a, const string& b) {
+                    return extractLeadingInt(a) < extractLeadingInt(b);
+                });
+
+                // decrypt the list
+                vector<string> decryptedTx = decryptString(masterTransactionList);
+
+                // create log file and write to it.
+                if (recordAllTransactions(decryptedTx, masterTransactionList)) {
+                    const char* ack = "True";
+                    send(monitorSocket, ack, strlen(ack), 0);
+                } else {
+                    const char* ack = "False";
+                    send(monitorSocket, ack, strlen(ack), 0);
+                }           
             }
+
             recreateSockets = true;
             close(monitorServerSocket);
             close(clientServerSocket);

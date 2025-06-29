@@ -102,6 +102,30 @@ bool recordTransaction(vector<string>& data) {
     return success;
 }
 
+bool openFileAndSendTransactions(int sockfd, const sockaddr_in& cliaddr, socklen_t len) {
+    /* Open block file and send all transactions to server M*/
+    bool success = true;
+    ifstream file(blockFile);
+
+    if (!file) {
+        cerr << "Failed to open file\n";
+        return false;
+    }
+
+    string line;
+    while (getline(file, line)) { 
+        ssize_t bytesSent =  sendto(sockfd, line.c_str(), line.length(), MSG_CONFIRM, (const struct sockaddr *) &cliaddr, len);
+        if (bytesSent < 0) {
+            success = false;
+            perror("The ServerA failed to send the response to the Main Server.");
+        }
+        usleep(10000);
+    }
+    const char* ack = "DONE";
+    sendto(sockfd, ack, strlen(ack), MSG_CONFIRM, (const struct sockaddr *) &cliaddr, len);
+    return success;
+}
+
 int startServer() {
     // start up server code copied from https://www.geeksforgeeks.org/udp-server-client-implementation-c/
     char buffer[1024]; 
@@ -207,9 +231,13 @@ int startServer() {
                     }
                 }
             }
-            // code 3 - Get all transactions from txt file
+            // Get all transactions from txt file
             else {
-
+                if (openFileAndSendTransactions(sockfd, cliaddr, len)) {
+                    cout << "The ServerA finished sending the response to the Main Server.\n";
+                } else {
+                    perror("The ServerA failed to send the response to the Main Server.");
+                }
             }
         }
     }
@@ -219,9 +247,7 @@ int startServer() {
     return 0; 
 }
 
-
 int main(int argc, char* argv[])
 {
     startServer();
-    cout << "Monitor wrote.\n";
 }
