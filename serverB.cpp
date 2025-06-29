@@ -117,7 +117,7 @@ bool openFileAndSendTransactions(int sockfd, const sockaddr_in& cliaddr, socklen
         ssize_t bytesSent =  sendto(sockfd, line.c_str(), line.length(), MSG_CONFIRM, (const struct sockaddr *) &cliaddr, len);
         if (bytesSent < 0) {
             success = false;
-            perror("The ServerA failed to send the response to the Main Server.");
+            perror("The ServerB failed to send the response to the Main Server.");
         }
         usleep(10000);
     }
@@ -234,9 +234,9 @@ int startServer() {
             // Get all transactions from txt file
             else {
                 if (openFileAndSendTransactions(sockfd, cliaddr, len)) {
-                    cout << "The ServerA finished sending the response to the Main Server.\n";
+                    cout << "The ServerB finished sending the response to the Main Server.\n";
                 } else {
-                    perror("The ServerA failed to send the response to the Main Server.");
+                    perror("The ServerB failed to send the response to the Main Server.");
                 }
             }
         }
